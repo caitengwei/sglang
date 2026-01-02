@@ -534,7 +534,9 @@ class Qwen2MoeForCausalLM(nn.Module):
 
 ### 1. MoE Block 结构
 
-**文件**: `python/sglang/srt/layers/moe/fused_moe.py`
+**文件**: `python/sglang/srt/models/qwen2_moe.py`
+
+**位置**: line 132
 
 ```python
 class Qwen2MoeSparseMoeBlock(nn.Module):
@@ -626,6 +628,10 @@ class TopK(CustomOp):
 
 ### 5. Fused MoE Kernel
 
+**文件**: `python/sglang/srt/layers/moe/fused_moe_triton/fused_moe_triton_kernels.py`
+
+**位置**: line 76
+
 ```python
 @triton.jit
 def fused_moe_kernel_gptq_awq(
@@ -656,6 +662,10 @@ def fused_moe_kernel_gptq_awq(
 ```
 
 ### 6. 专家并行（EP）
+
+**文件**: `python/sglang/srt/layers/moe/fused_moe_triton/layer.py`
+
+**FusedMoE 类位置**: line 104
 
 ```python
 class DeepEPMoE(FusedMoE):
@@ -834,46 +844,46 @@ class TokenizerManager:
    - _send_one_request() (923)
    - send_pyobj() → ZMQ → Scheduler
    ↓
-5. Scheduler (scheduler.py:325)
+5. Scheduler (scheduler.py:958)
    - event_loop_normal()
-   - recv_requests() (2763)
-   - get_next_batch_to_run() (1865)
-   - alloc_for_extend() / alloc_for_decode() (memory_pool.py)
-   - match_prefix() (radix_cache.py:189)
-   - run_batch() (3389)
-   - forward_batch_generation() (tp_worker.py:558)
+   - recv_requests() (需要搜索)
+   - get_next_batch_to_run() (1630)
+   - alloc_for_extend() / alloc_for_decode() (mem_cache/common.py:320/420)
+   - match_prefix() (mem_cache/radix_cache.py:251)
+   - run_batch() (需要搜索)
+   - forward_batch_generation() (tp_worker.py:61)
    ↓
-6. ModelRunner (model_runner.py:620)
+6. ModelRunner (model_runner.py:需要搜索)
    - forward()
    - model.forward() (实际模型)
    ↓
-7. Qwen2MoeForCausalLM (qwen2_moe.py:258)
+7. Qwen2MoeForCausalLM (models/qwen2_moe.py:需要搜索)
    - forward()
-   - self.model() (264)
+   - self.model()
    ↓
-8. Qwen2MoeModel (qwen2_moe.py:189)
+8. Qwen2MoeModel (models/qwen2_moe.py:需要搜索)
    - forward()
-   - self.layers[i]() (224)  # 多层循环
+   - self.layers[i]()   # 多层循环
    ↓
-9. Qwen2MoeDecoderLayer (qwen2_moe.py:110)
+9. Qwen2MoeDecoderLayer (models/qwen2_moe.py:需要搜索)
    - forward()
-   - self.self_attn() (139)
-   - self.mlp() (155)  # MoE层
+   - self.self_attn()
+   - self.mlp()         # MoE层
    ↓
-10. Qwen2MoeSparseMoeBlock (qwen2_moe.py:132)
+10. Qwen2MoeSparseMoeBlock (models/qwen2_moe.py:132/264)
     - forward()
-    - self.gate() (1345)  # 门控
-    - self.topk() (1348)  # TopK选择
-    - self.experts() (1352)  # 专家计算
+    - self.gate()        # 门控 (在 models/qwen2_moe.py)
+    - self.topk()        # TopK选择 (在 layers/moe/topk.py)
+    - self.experts()     # 专家计算 (在 layers/moe/fused_moe_triton/)
     ↓
-11. FusedMoE (fused_moe.py:526)
-    - forward()
-    - select_experts() (822)
-    - fused_moe_kernel_gptq_awq() (Triton Kernel)
+11. FusedMoE (layers/moe/fused_moe_triton/layer.py:104)
+    - forward() (832)
+    - select_experts()   (在 layers/moe/topk.py)
+    - fused_moe_kernel_gptq_awq() (fused_moe_triton_kernels.py:76)  # Triton Kernel
     ↓
 12. 返回路径
     - 结果返回 TPWorker
-    - process_batch_result() (scheduler.py:1630)
+    - process_batch_result() (scheduler.py:需要搜索)
     - send_to_detokenizer.send_pyobj()
     - DetokenizerManager.process_batch_result()
     - send_to_tokenizer.send_pyobj()
@@ -890,17 +900,16 @@ class TokenizerManager:
 | TokenizerManager | generate_request | tokenizer_manager.py | 405 |
 | TokenizerManager | _tokenize_one_request | tokenizer_manager.py | 586 |
 | TokenizerManager | _send_one_request | tokenizer_manager.py | 923 |
-| Scheduler | event_loop_normal | scheduler.py | 325 |
-| Scheduler | get_next_batch_to_run | scheduler.py | 1865 |
-| Memory Pool | alloc_for_extend | memory_pool.py | 267 |
-| RadixCache | match_prefix | radix_cache.py | 189 |
-| Scheduler | run_batch | scheduler.py | 3389 |
-| TPWorker | forward_batch_generation | tp_worker.py | 558 |
-| ModelRunner | forward | model_runner.py | 620 |
-| Qwen2Moe | forward | qwen2_moe.py | 258 |
-| Qwen2MoeModel | forward | qwen2_moe.py | 189 |
-| MoE Block | forward | fused_moe.py | 1209 |
-| FusedMoE | forward | fused_moe.py | 526 |
+| Scheduler | event_loop_normal | scheduler.py | 958 |
+| Scheduler | get_next_batch_to_run | scheduler.py | 1630 |
+| Memory Pool | alloc_for_extend | mem_cache/common.py | 320 |
+| Memory Pool | alloc_for_decode | mem_cache/common.py | 420 |
+| RadixCache | match_prefix | mem_cache/radix_cache.py | 251 |
+| TPWorker | forward_batch_generation | tp_worker.py | 61 |
+| Qwen2MoeSparseMoeBlock | __init__ | models/qwen2_moe.py | 132 |
+| Qwen2MoeSparseMoeBlock | forward | models/qwen2_moe.py | 264 |
+| Qwen2MoeSparseMoeBlock | _forward_shared_experts | models/qwen2_moe.py | 207 |
+| Qwen2MoeSparseMoeBlock | _forward_router_experts | models/qwen2_moe.py | 243 |
 
 ### 3. 数据流和控制流
 
@@ -972,12 +981,12 @@ sequenceDiagram
 
 | 优化点 | 实现位置 | 性能提升 | 原理 |
 |-------|---------|---------|------|
-| **RadixCache 前缀缓存** | `radix_cache.py` | 5x 延迟降低 | 复用 KV 缓存，跳过前缀计算 |
-| **连续批处理** | `scheduler.py` | 3-5x 吞吐提升 | 动态合并请求，提高 GPU 利用率 |
-| **Fused MoE Kernel** | `fused_moe.py` | 4x 速度提升 | Triton 实现，专家计算融合 |
-| **All-To-All 优化** | `deepep.py` | 2x EP 通信 | 异步通信，拓扑感知 |
-| **张量并行** | `parallel_state.py` | 线性扩展 | 列并行 + 行并行 |
-| **CUDA Graph** | `model_runner.py` | 5-10% 加速 | Kernel 启动开销消除 |
+| **RadixCache 前缀缓存** | `mem_cache/radix_cache.py` | 5x 延迟降低 | 复用 KV 缓存，跳过前缀计算 |
+| **连续批处理** | `managers/scheduler.py` | 3-5x 吞吐提升 | 动态合并请求，提高 GPU 利用率 |
+| **Fused MoE Kernel** | `layers/moe/fused_moe_triton/` | 4x 速度提升 | Triton 实现，专家计算融合 |
+| **All-To-All 优化** | `layers/moe/ep_moe/` | 2x EP 通信 | 异步通信，拓扑感知 |
+| **张量并行** | `distributed/parallel_state.py` | 线性扩展 | 列并行 + 行并行 |
+| **CUDA Graph** | `model_executor/model_runner.py` | 5-10% 加速 | Kernel 启动开销消除 |
 
 ### 2. MoE 模型特有优化
 
@@ -1075,13 +1084,18 @@ prof.export_chrome_trace("trace.json")
    - `python/sglang/srt/model_executor/model_runner.py` - 模型运行器
 
 4. **MoE 实现**
-   - `python/sglang/srt/models/qwen2_moe.py` - Qwen2 MoE 模型
-   - `python/sglang/srt/layers/moe/fused_moe_triton/fused_moe.py` - 融合的 MoE kernel
+   - `python/sglang/srt/models/qwen2_moe.py` - Qwen2 MoE 模型 (Qwen2MoeSparseMoeBlock)
+   - `python/sglang/srt/layers/moe/topk.py` - TopK 选择逻辑
+   - `python/sglang/srt/layers/moe/fused_moe_triton/` - Fused MoE Kernel 实现
+     - `fused_moe_triton_kernels.py` - Triton kernels
+     - `layer.py` - FusedMoE 基础类
    - `python/sglang/srt/layers/moe/deepseek_moe.py` - DeepSeek MoE
+   - `python/sglang/srt/layers/moe/ep_moe/` - 专家并行
 
 5. **基础组件**
-   - `python/sglang/srt/memory_pool.py` - 内存池管理
-   - `python/sglang/srt/radix_cache.py` - 前缀缓存
+   - `python/sglang/srt/mem_cache/memory_pool.py` - 内存池管理
+   - `python/sglang/srt/mem_cache/radix_cache.py` - 前缀缓存
+   - `python/sglang/srt/mem_cache/common.py` - 内存分配函数
    - `python/sglang/srt/layers/attention/` - 注意力后端
    - `python/sglang/srt/distributed/` - 分布式并行
 
