@@ -20,7 +20,7 @@
 ```mermaid
 graph TD
     subgraph Entry Layer
-        HTTP["HTTP Server<br/>python/sglaang/srt/entrypoints/http_server.py"]
+        HTTP["HTTP Server<br/>python/sglang/srt/entrypoints/http_server.py"]
         gRPC["gRPC Server<br/>python/sglang/srt/entrypoints/grpc_server.py"]
         Engine["Python API Engine<br/>python/sglang/srt/entrypoints/engine.py"]
     end
@@ -535,7 +535,7 @@ graph TB
         TritonAttn["Triton Backend<br/>triton_backend.py"]
     end
 
-    subgraph Linear Layers Layers
+    subgraph Linear Layers
         QKVProj["QKVParallelLinear<br/>linear.py"]
         RowProj["RowParallelLinear<br/>linear.py"]
         RepLinear["ReplicatedLinear<br/>linear.py"]
@@ -555,7 +555,7 @@ graph TB
         FusedMoE["Fused MoE Kernel<br/>fused_moe_triton.py"]
     end
 
-    subgraph Other Layers Layers
+    subgraph Other Layers
         RMSNorm["RMSNorm<br/>layernorm.py"]
         RoPE["RotaryEmbedding<br/>rotary_embedding.py"]
         SiLU["SiLU Activation<br/>activation.py"]
@@ -1521,24 +1521,18 @@ def alloc_for_extend(batch: ScheduleBatch):
 graph LR
     subgraph "Q/K/V Computation"
         Input["Input Embedding"]
-        QKVProj[QKV Projection
-                Parallel Linear]
-        RoPE[Apply RoPE
-             Rotary Embedding]
+        QKVProj["QKV Projection<br/>Parallel Linear"]
+        RoPE["Apply RoPE<br/>Rotary Embedding"]
     end
 
     subgraph "KV Cache"
-        KVWrite[写入 KV Cache
-                token_to_kv_pool]
-        KVRead[读取 KV Cache
-               req_to_token_pool]
+        KVWrite["写入 KV Cache<br/>token_to_kv_pool"]
+        KVRead["读取 KV Cache<br/>req_to_token_pool"]
     end
 
     subgraph "Attention Computation"
-        Attention[Attention Kernel
-                  FlashInfer/Triton]
-        Output[Output Projection
-               RowParallelLinear]
+        Attention["Attention Kernel<br/>FlashInfer/Triton"]
+        Output["Output Projection<br/>RowParallelLinear"]
     end
 
     Input --> QKVProj
