@@ -33,19 +33,20 @@ graph TD
 
     subgraph Scheduler Core
         SchedCore["Scheduler Core<br/>python/sglang/srt/managers/scheduler.py"]
-        BatchSched["Batch Scheduler<br/>python/sglang/srt/scheduling/"]
-        MemoryPool["Memory Pool<br/>python/sglang/srt/memory_pool.py"]
-        RadixCache["Radix Cache<br/>python/sglang/srt/radix_cache.py"]
+        BatchSched["Batch Scheduler<br/>python/sglang/srt/managers/schedule_batch.py"]
+        MemoryPool["Memory Pool<br/>python/sglang/srt/mem_cache/memory_pool.py"]
+        RadixCache["Radix Cache<br/>python/sglang/srt/mem_cache/radix_cache.py"]
     end
 
     subgraph Model Execution
         ModelRunner["ModelRunner<br/>python/sglang/srt/model_executor/model_runner.py"]
+        ForwardBatch["ForwardBatch<br/>python/sglang/srt/model_executor/forward_batch_info.py"]
         Models["Models<br/>python/sglang/srt/models/"]
         TPWorker["TP ModelWorker<br/>python/sglang/srt/managers/tp_worker.py"]
     end
 
     subgraph Foundation Layer
-        RadixAttn["RadixAttention<br/>python/sglang/srt/layers/attention/"]
+        RadixAttn["RadixAttention<br/>python/sglang/srt/layers/radix_attention.py"]
         Linear["Parallel Linear<br/>python/sglang/srt/layers/linear.py"]
         Quant["Quantization<br/>python/sglang/srt/layers/quantization/"]
         MoE["MoE Layers<br/>python/sglang/srt/layers/moe/"]
@@ -137,6 +138,11 @@ graph LR
 - 管理三个子进程：Tokenizer、Scheduler、Detokenizer
 - 使用 ZMQ 进行 IPC
 
+**launch_server.py** (`python/sglang/launch_server.py`)
+- 主要的启动入口点
+- 选择启动 HTTP 或 gRPC 服务器
+- 根据配置参数初始化服务
+
 ---
 
 ## 管理层架构
@@ -182,12 +188,16 @@ sequenceDiagram
 **位置**: `python/sglang/srt/managers/scheduler.py`
 
 **架构特点：**
-- 继承多个 Mixin 类实现功能组合：
+- 继承多个 Mixin 类实现功能组合（共9个Mixin）：
   - `SchedulerOutputProcessorMixin`: 输出处理
   - `SchedulerUpdateWeightsMixin`: 权重更新
   - `SchedulerProfilerMixin`: 性能分析
   - `SchedulerMetricsMixin`: 指标收集
-  - `SchedulerDisaggregationMixin`: PD 分离支持
+  - `SchedulerDisaggregationDecodeMixin`: PD分离（解码阶段）
+  - `SchedulerDisaggregationPrefillMixin`: PD分离（预填充阶段）
+  - `SchedulerMultiplexMixin`: 多路复用支持
+  - `SchedulerRuntimeCheckerMixin`: 运行时检查
+  - `SchedulerPPMixin`: 流水线并行支持
 
 **核心功能：**
 - 请求生命周期管理
@@ -258,7 +268,7 @@ graph TB
 - `process_batch_result()`: 处理推理结果
 
 #### 2. Batch Scheduling
-**位置**: `python/sglang/srt/scheduling/`
+**位置**: `python/sglang/srt/managers/`
 
 **核心组件：**
 - **ScheduleBatch**: 管理一批请求
@@ -278,7 +288,7 @@ graph TB
   - 支持缓存感知和缓存无关策略
 
 #### 3. Memory Management
-**位置**: `python/sglang/srt/memory_pool.py`
+**位置**: `python/sglang/srt/mem_cache/`
 
 **两级内存池架构：**
 
@@ -303,7 +313,7 @@ def alloc_for_decode(batch: ScheduleBatch):
 ```
 
 #### 4. RadixCache - 前缀缓存
-**位置**: `python/sglang/srt/radix_cache.py`
+**位置**: `python/sglang/srt/mem_cache/radix_cache.py`
 
 **RadixTree 结构：**
 ```python
@@ -574,7 +584,7 @@ graph TB
 
 #### 1. RadixAttention - 统一注意力接口
 
-**位置**: `python/sglang/srt/layers/attention/radix_attention.py`
+**位置**: `python/sglang/srt/layers/radix_attention.py`
 
 **核心职责：**
 - 提供统一的注意力接口
@@ -633,6 +643,15 @@ graph LR
 2. **性能最优**：根据场景自动选择最优后端
 3. **功能互补**：不同后端支持不同特性
 
+**支持的后端：**
+- **FlashInferBackend**: NVIDIA GPU 的高性能后端（默认）
+- **FlashAttentionBackend**: 通用后端
+- **TritonBackend**: 灵活的研究后端
+- **XPUAttentionBackend**: Intel XPU 支持
+- **AscendBackend**: 华为 Ascend NPU 支持
+- **IntelAMXBackend**: Intel AMX 优化
+- **WaveBackend**: Wave Computing 支持
+
 **后端对比：**
 
 **FlashInfer Backend**
@@ -690,12 +709,14 @@ def select_attention_backend(attn_backend, kv_cache_dtype, device):
 
 **后端性能对比：**
 
-| 后端 | 性能 | 显存 | 灵活性 | 适用场景 |
-|------|------|------|--------|----------|
-| FlashInfer | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | 生产环境 |
-| FlashAttention | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | 通用场景 |
-| Triton | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 研究/定制 |
-| Torch Native | ⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐ | 调试/开发 |
+| 后端 | 性能 | 显存 | 灵活性 | 适用场景 | 支持硬件 |
+|------|------|------|--------|----------|----------|
+| FlashInfer | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | 生产环境 | NVIDIA GPU |
+| FlashAttention | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | 通用场景 | NVIDIA GPU |
+| Triton | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 研究/定制 | NVIDIA GPU |
+| XPUAttention | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | Intel GPU | Intel GPU |
+| Ascend | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | 华为NPU | Ascend NPU |
+| Torch Native | ⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐ | 调试/开发 | All |
 
 **选择建议：**
 - **生产环境**: FlashInfer（性能最优）
@@ -709,16 +730,18 @@ def select_attention_backend(attn_backend, kv_cache_dtype, device):
 
 ```mermaid
 graph TB
-    BaseLinear["BaseLinear<br/>基础线性层"]
+    LinearBase["LinearBase<br/>基础线性层"]
     QKVParallel["QKVParallelLinear<br/>QKV并行"]
     RowParallel["RowParallelLinear<br/>行并行"]
     RepLinear["ReplicatedLinear<br/>复制线性层"]
     ColumnParallel["ColumnParallelLinear<br/>列并行"]
+    MergedColumnParallel["MergedColumnParallelLinear<br/>合并列并行"]
 
-    BaseLinear --> QKVParallel
-    BaseLinear --> RowParallel
-    BaseLinear --> RepLinear
-    BaseLinear --> ColumnParallel
+    LinearBase --> QKVParallel
+    LinearBase --> RowParallel
+    LinearBase --> RepLinear
+    LinearBase --> ColumnParallel
+    LinearBase --> MergedColumnParallel
 
     style QKVParallel fill:#e1f5ff
     style RowParallel fill:#e1f5ff
@@ -743,7 +766,7 @@ graph TB
 
 **关键实现细节：**
 ```python
-class QKVParallelLinear(BaseLinear):
+class QKVParallelLinear(ColumnParallelLinear):
     def create_weights(self, input_size, output_size):
         # 输出按 TP 切分
         output_size_per_partition = output_size // tp_size
@@ -751,7 +774,7 @@ class QKVParallelLinear(BaseLinear):
             output_size_per_partition, input_size
         ))
 
-class RowParallelLinear(BaseLinear):
+class RowParallelLinear(LinearBase):
     def create_weights(self, input_size, output_size):
         # 输入按 TP 切分
         input_size_per_partition = input_size // tp_size
@@ -764,6 +787,18 @@ class RowParallelLinear(BaseLinear):
         # all-reduce 聚合
         output = all_reduce(output, tp_group)
         return output
+
+class ColumnParallelLinear(LinearBase):
+    def create_weights(self, input_size, output_size):
+        # 输出按 TP 切分
+        output_size_per_partition = output_size // tp_size
+        self.weight = Parameter(torch.empty(
+            output_size_per_partition, input_size
+        ))
+
+class MergedColumnParallelLinear(ColumnParallelLinear):
+    # 合并多个列并行层（如 MLP 的 gate 和 up 投影）
+    pass
 ```
 
 **线性层性能优化：**
@@ -781,13 +816,20 @@ graph TB
     subgraph "Quant Config Layer"
         QConfig["QuantizationConfig<br/>抽象配置"]
         FP8Config["FP8Config<br/>FP8量化"]
+        W8A8Fp8Config["W8A8Fp8Config<br/>W8A8 FP8"]
+        W8A8Int8Config["W8A8Int8Config<br/>W8A8 INT8"]
         AWQConfig["AWQConfig<br/>AWQ量化"]
         GPTQConfig["GPTQConfig<br/>GPTQ量化"]
+        Mxfp4Config["Mxfp4Config<br/>MXFP4量化"]
+        W4AFp8Config["W4AFp8Config<br/>W4A FP8量化"]
+        CompressedTensorsConfig["CompressedTensorsConfig<br/>压缩张量"]
     end
 
     subgraph "Quant Method Layer"
         QuantMethod["LinearMethodBase<br/>量化方法基类"]
-        FP8Method["FP8LinearMethod<br/>FP8方法"]
+        FP8Method["Fp8LinearMethod<br/>FP8方法"]
+        W8A8Fp8Method["W8A8Fp8LinearMethod<br/>W8A8 FP8方法"]
+        W8A8Int8Method["W8A8Int8LinearMethod<br/>W8A8 INT8方法"]
         AWQMethod["AWQLinearMethod<br/>AWQ方法"]
         GPTQMethod["GPTQLinearMethod<br/>GPTQ方法"]
     end
@@ -800,14 +842,23 @@ graph TB
     end
 
     QConfig --> FP8Config
+    QConfig --> W8A8Fp8Config
+    QConfig --> W8A8Int8Config
     QConfig --> AWQConfig
     QConfig --> GPTQConfig
+    QConfig --> Mxfp4Config
+    QConfig --> W4AFp8Config
+    QConfig --> CompressedTensorsConfig
 
     QuantMethod --> FP8Method
+    QuantMethod --> W8A8Fp8Method
+    QuantMethod --> W8A8Int8Method
     QuantMethod --> AWQMethod
     QuantMethod --> GPTQMethod
 
     FP8Method --> CUTLASS
+    W8A8Fp8Method --> CUTLASS
+    W8A8Int8Method --> CUTLASS
     AWQMethod --> Marlin
     GPTQMethod --> Exllama
     AWQMethod --> Triton
@@ -927,30 +978,37 @@ class Model(nn.Module):
 ```mermaid
 graph TB
     subgraph "MoE Core Components"
-        MoE["DeepseekMoE<br/>moe层实现"]
+        DeepEPMoE["DeepEPMoE<br/>ep_moe/layer.py"]
+        FusedMoE["FusedMoE<br/>fused_moe_triton/layer.py"]
         Router["MoERouter<br/>专家路由"]
         Experts["Experts<br/>专家网络"]
         Gate["Gate Linear<br/>门控网络"]
+        TokenDispatcher["TokenDispatcher<br/>token分发"]
     end
 
     subgraph "MoE Optimizations"
         PackParams["pack_params<br/>参数打包"]
-        FusedMoE["fused_moe<br/>融合kernel"]
+        FusedMoEKernel["fused_moe<br/>融合kernel"]
+        DeepEPBackend["DeepEP<br/>专家并行后端"]
         GroupedGEMM["Grouped GEMM<br/>分组矩阵乘"]
     end
 
-    MoE --> Gate
+    DeepEPMoE --> Gate
+    FusedMoE --> Gate
     Gate --> Router
-    Router --> Experts
+    Router --> TokenDispatcher
+    TokenDispatcher --> Experts
     Experts --> PackParams
-    PackParams --> FusedMoE
-    FusedMoE --> GroupedGEMM
+    PackParams --> FusedMoEKernel
+    DeepEPMoE --> DeepEPBackend
+    FusedMoEKernel --> GroupedGEMM
 
-    style MoE fill:#ffe1f2
-    style FusedMoE fill:#fff4e1
+    style DeepEPMoE fill:#ffe1f2
+    style FusedMoE fill:#ffe1f2
+    style FusedMoEKernel fill:#fff4e1
 ```
 
-**DeepseekMoE 实现：**
+**DeepEPMoE 实现（专家并行）：**
 ```python
 class DeepseekMoE(nn.Module):
     def __init__(self, config, quant_config=None):
@@ -1970,26 +2028,29 @@ def performance_isolation(requests):
 
 1. **核心设计文档**
    - `python/sglang/srt/managers/scheduler.py` - 调度器核心
-   - `python/sglang/srt/layers/attention/radix_attention.py` - RadixAttention
-   - `python/sglang/srt/memory_pool.py` - 内存管理
-   - `python/sglang/srt/radix_cache.py` - 前缀缓存
+   - `python/sglang/srt/layers/radix_attention.py` - RadixAttention
+   - `python/sglang/srt/mem_cache/memory_pool.py` - 内存管理
+   - `python/sglang/srt/mem_cache/radix_cache.py` - 前缀缓存
 
 2. **模型实现**
    - `python/sglang/srt/models/llama.py` - LLaMA 实现
    - `python/sglang/srt/models/deepseek.py` - DeepSeek 实现
-   - `python/sglang/srt/vipexecutor/model_runner.py` - 模型执行
+   - `python/sglang/srt/model_executor/model_runner.py` - 模型执行
 
 3. **优化技术**
-   - `python/sglang/srt/layers/moe/deepseek_moe.py` - MoE 实现
+   - `python/sglang/srt/layers/moe/ep_moe/layer.py` - MoE 实现（DeepEPMoE）
+   - `python/sglang/srt/layers/moe/fused_moe_triton/layer.py` - FusedMoE
    - `python/sglang/srt/speculative/` - 推测解码
    - `python/sglang/srt/distributed/` - 分布式并行
+   - `python/sglang/srt/disaggregation/` - PD 分离
 
 4. **设计决策**
    - FlashAttention: https://arxiv.org/abs/2205.14135
    - RadixAttention: https://arxiv.org/abs/2312.07177
    - EAGLE: https://arxiv.org/abs/2401.15077
    - Medusa: https://arxiv.org/abs/2401.10774
+   - DeepEP: 专家并行通信优化
 
 ---
 
-*最后更新：2025-01-01*
+*最后更新：2026-01-03*
