@@ -1132,9 +1132,3 @@ prof.export_chrome_trace("trace.json")
 - 连续批处理（3-5x 吞吐）
 - Fused MoE Kernel（4x 速度）
 - All-To-All 优化（2x 通信）
-
-希望本文档能帮助您深入理解 SGLang 的在线推理架构和实现细节。
-
----
-
-*本文档由代码分析自动生成，最后更新：2025-01-02*

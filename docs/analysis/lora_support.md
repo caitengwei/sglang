@@ -64,29 +64,20 @@ SGLang 通过装饰者模式将基础模型的线性层替换为支持 LoRA 的�
 ```mermaid
 graph TB
     subgraph API层
-        HTTP_API[HTTP API
-        /load_lora_adapter
-        /unload_lora_adapter]
-        OAI_API[OpenAI API
-        model="base:adapter"]
+        HTTP_API[HTTP API<br/>/load_lora_adapter<br/>/unload_lora_adapter]
+        OAI_API[OpenAI API<br/>model=&quot;base:adapter&quot;]
     end
 
     subgraph 注册管理层
-        LoRARegistry[LoRARegistry
-        适配器注册表
-        引用计数管理]
+        LoRARegistry[LoRARegistry<br/>适配器注册表<br/>引用计数管理]
     end
 
     subgraph 调度层
-        LoRAManager[LoRAManager
-        适配器生命周期
-        批次准备]
+        LoRAManager[LoRAManager<br/>适配器生命周期<br/>批次准备]
     end
 
     subgraph 内存管理层
-        LoRAMemoryPool[LoRAMemoryPool
-        A_buffer/B_buffer
-        驱逐策略]
+        LoRAMemoryPool[LoRAMemoryPool<br/>A_buffer/B_buffer<br/>驱逐策略]
     end
 
     subgraph 模型层
@@ -97,14 +88,11 @@ graph TB
             RowParallelLinearWithLoRA[RowParallelLinearWithLoRA]
         end
 
-        BaseModel[基础模型
-        Llama/Qwen/etc]
+        BaseModel[基础模型<br/>Llama/Qwen/etc]
     end
 
     subgraph 计算后端
-        TritonBackend[TritonLoRABackend
-        sgemm_lora_a_fwd
-        sgemm_lora_b_fwd]
+        TritonBackend[TritonLoRABackend<br/>sgemm_lora_a_fwd<br/>sgemm_lora_b_fwd]
         ChunkedBackend[ChunkedSgmvLoRABackend]
     end
 
@@ -123,36 +111,23 @@ graph TB
 ```mermaid
 graph TB
     subgraph 配置数据
-        LoRAConfig[LoRAConfig
-        adapter_config.json]
+        LoRAConfig[LoRAConfig<br/>adapter_config.json]
     end
 
     subgraph 适配器对象
-        LoRARef[LoRARef
-        lora_id, lora_name
-        lora_path, pinned]
-        LoRAAdapter[LoRAAdapter
-        权重和配置
-        CPU缓存]
+        LoRARef[LoRARef<br/>lora_id, lora_name<br/>lora_path, pinned]
+        LoRAAdapter[LoRAAdapter<br/>权重和配置<br/>CPU缓存]
     end
 
     subgraph 内存池
-        A_Buffer[A_buffer
-        (max_loras, r*C, input_dim)]
-        B_Buffer[B_buffer
-        (max_loras, output_dim, r)]
-        UID_Mapping[uid_to_buffer_id
-        buffer_id_to_uid]
-        EvictionPolicy[驱逐策略
-        LRU/LFU]
+        A_Buffer[A_buffer<br/>&#40;max_loras, r*C, input_dim&#41;]
+        B_Buffer[B_buffer<br/>&#40;max_loras, output_dim, r&#41;]
+        UID_Mapping[uid_to_buffer_id<br/>buffer_id_to_uid]
+        EvictionPolicy[驱逐策略<br/>LRU/LFU]
     end
 
     subgraph 批次信息
-        LoRABatchInfo[LoRABatchInfo
-        weight_indices
-        lora_ranks
-        scalings
-        seg_lens]
+        LoRABatchInfo[LoRABatchInfo<br/>weight_indices<br/>lora_ranks<br/>scalings<br/>seg_lens]
     end
 
     LoRAConfig --> LoRARef
