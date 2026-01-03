@@ -2050,7 +2050,3 @@ def performance_isolation(requests):
    - EAGLE: https://arxiv.org/abs/2401.15077
    - Medusa: https://arxiv.org/abs/2401.10774
    - DeepEP: 专家并行通信优化
-
----
-
-*最后更新：2026-01-03*
