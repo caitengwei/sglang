@@ -1,8 +1,10 @@
 # SGLang Q1 Roadmap 详细分析 (Issue #12780)
 
+> **注意**：Issue #12780 链接指向上游 sgl-project/sglang 仓库，可能需要验证可访问性：https://github.com/sgl-project/sglang/issues/12780
+
 ## 概述
 
-**Issue**: #12780 - Development Roadmap (2026 Q1)
+**Issue**: #12780 - Development Roadmap (2026 Q1) *(链接待核实)*
 **作者**: hnyls2002 (Liangsheng Yin)
 **发布时间**: 2025-11-06
 **最后更新**: 2026-01-19
@@ -379,10 +381,13 @@
 - **贡献者**: @mick @JustinTong0323 @yuan-luo
 - **Slack**: #multi-modal
 
+> **当前状态更新**：截至 2026 Q1，SGLang 已支持 **30+ 种视觉语言模型** (VL Models)，包括 LLaVA 系列、Qwen-VL 系列、InternVL、Phi-Vision、Gemma-VL 等。此外还支持**完整的扩散生成栈**（图像和视频生成）。
+
 ### 9.1 Day-0 Support & OCR Models
 | 维度 | 分析 |
 |------|------|
 | **作用** | 主要模型的首日支持，增加 OCR 模型 |
+| **当前状态** | ✅ 30+ VL 模型已支持 |
 | **实现难度** | ⭐⭐⭐ (中等) |
 | **价值评估** | ⭐⭐⭐⭐ (高) - 模型覆盖度 |
 | **预估工作量** | 持续进行 |
@@ -421,15 +426,18 @@
 
 - **Slack**: #quantization
 
+> **当前状态更新**：截至 2026 Q1，SGLang 已支持 **34+ 种量化方法**，包括 GPTQ、AWQ、SqueezeLLM、FP8、INT8、GGUF、Marlin、Exl2 等主流格式。
+
 ### 10.1 通用量化格式支持
 - **Issue**: #8180
 
 | 维度 | 分析 |
 |------|------|
 | **作用** | 支持多种量化格式 |
+| **当前状态** | ✅ 大部分已实现 (34+ 方法) |
 | **实现难度** | ⭐⭐⭐⭐ (较高) |
 | **价值评估** | ⭐⭐⭐⭐⭐ (极高) - 推理成本优化 |
-| **预估工作量** | 4-6 周 |
+| **预估工作量** | 持续维护 |
 
 ### 10.2 ModelOpt Support
 - **PoC**: @Edwardf0t1
@@ -621,13 +629,15 @@
 
 ## 十五、Hardware Support (硬件支持)
 
-| 平台 | Timeline | 负责人 | Issue | 难度 | 价值 |
-|------|----------|--------|-------|------|------|
-| AMD | 2025 Q4 | @HaiShaw | #12890 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| TPU | 2025 Q4 | - | sglang-jax#190 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| NPU | 2025 Q4 | @iforgetmyname @ZhengdQin | #13664 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
-| Intel CPU/XPU | 2025 Q4 | - | #12802, #12806 | ⭐⭐⭐⭐ | ⭐⭐⭐ |
-| Multi-backend Abstraction | - | @Alcanderian | - | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+> **时间线说明**：原文档标注 "2025 Q4" 应为历史遗留，本文档为 2026 Q1 Roadmap，这些项目应理解为"进行中"或需核实当前状态。
+
+| 平台 | Timeline | 负责人 | Issue | 难度 | 价值 | 当前状态 |
+|------|----------|--------|-------|------|------|----------|
+| AMD | 进行中 | @HaiShaw | #12890 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | 待核实 |
+| TPU | 进行中 | - | sglang-jax#190 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | 待核实 |
+| NPU | 进行中 | @iforgetmyname @ZhengdQin | #13664 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | 待核实 |
+| Intel CPU/XPU | 进行中 | - | #12802, #12806 | ⭐⭐⭐⭐ | ⭐⭐⭐ | 待核实 |
+| Multi-backend Abstraction | - | @Alcanderian | - | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 核心方向 |
 
 ---
 
@@ -709,6 +719,65 @@
 | Nightly Tests 增强 | ⭐⭐⭐ | ⭐⭐⭐⭐ | 持续进行 |
 | Full Feature Coverage CI | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 4-6 周 |
 | B300/GB200 硬件覆盖 | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 2-3 周 |
+
+---
+
+## 补充：已发现但未列入 Roadmap 的特性
+
+以下特性在代码库中已实现，但未在原 Roadmap 文档中明确列出：
+
+### Prefill Delayer 系统
+
+**代码路径**: `python/sglang/srt/managers/prefill_delayer.py`
+
+**功能描述**：
+- 智能延迟 Prefill 请求，优化整体吞吐量
+- 基于 token 使用率水位线（`token_usage_low_watermark`）做决策
+- 支持配置最大延迟轮数（`max_delay_passes`）
+- 与 DP Attention 调度器集成
+
+**启用方式**：
+```bash
+--enable-prefill-delayer
+--prefill-delayer-max-delay-passes N
+--prefill-delayer-token-usage-low-watermark 0.8
+```
+
+**相关集成**: `scheduler.py:767-778`, `schedule_policy.py:385-431`
+
+### Batch Overlap 系统
+
+**代码路径**: `python/sglang/srt/batch_overlap/`
+
+**功能描述**：
+- **Single Batch Overlap (SBO)**: 单批次内的计算重叠优化
+  - 支持 `combine_down_gemm_two_stream_overlap`
+  - 与 FlashInfer CuteDSL 和 DeepGEMM 后端集成
+- **Two Batch Overlap (TBO)**: 双批次之间的流水线重叠
+  - `TboDPAttentionPreparer` 用于 DP Attention 场景
+
+**相关文件**：
+- `single_batch_overlap.py` - SBO 标志位和配置
+- `two_batch_overlap.py` - TBO 实现
+- `operations.py` / `operations_strategy.py` - 重叠操作策略
+
+### HiCache 多级存储后端
+
+**代码路径**: `python/sglang/srt/mem_cache/`
+
+**功能描述**：
+- 支持 GPU → CPU → NVMe 的多级 KV Cache 存储
+- 稀疏注意力优化（`mem_cache/sparsity/`）
+- 与 PD Disaggregation 配合使用
+
+### 量化方法统计
+
+原 Roadmap 提到"通用量化格式支持"，实际代码库已支持 **34+ 种量化方法**（截至 2026 Q1）。
+
+### 多模态支持统计
+
+- **VL 模型**: 30+ 种视觉语言模型支持
+- **扩散生成**: 完整的图像/视频生成栈（参见 Diffusion 章节）
 
 ---
 

@@ -37,6 +37,30 @@ SGLang 已实现生产级的 LoRA 服务系统，核心能力包括：
 - 异步加载增益: 35% TTFT 中位数降低
 - GPU 内存复用率: 预分配池避免碎片
 
+#### 已实现的异步加载能力 (LoRA Overlap Loading)
+
+SGLang 已经实现了 LoRA 权重的重叠加载机制，可在计算进行的同时异步加载下一批次需要的适配器：
+
+**核心实现：**
+- `lora_overlap_loader.py` - 独立的 CUDA Stream 实现异步加载
+- 通过 `--enable-lora-overlap-loading` 参数启用
+- 已集成到 `scheduler.py:389-392` 和 `scheduler.py:1996-2000`
+
+**工作原理：**
+```python
+# lora_overlap_loader.py:21-49
+class LoRAOverlapLoader:
+    def __init__(self, lora_manager):
+        self.load_stream: CudaStream = device_module.Stream()  # 独立 CUDA stream
+        self.lora_to_overlap_load_event: Dict[Optional[str], CudaEvent] = {}
+
+    def try_overlap_load_lora(self, lora_id, running_loras) -> bool:
+        # 检查加载状态：NOT_LOADED -> LOADING -> LOADED
+        # 异步加载不阻塞主计算流
+```
+
+**注意**：此能力已实现基础的异步加载，但**智能预取**（基于访问模式预测）仍是提案二的优化目标。
+
 ### 目标状态 (To-Be)
 
 **6-12 个月愿景：**
@@ -196,7 +220,7 @@ BLOCK_SIZE_MAP = {
 - **调优难度**: 需要针对不同硬件 (A100/H100, AMD) 分别调优
 - **兼容性**: 需保持与现有 Triton backend 的 API 兼容
 
-**ROI**: **8-12x** (考虑 10 个以上的大客户采用)
+**预估 ROI**: **8-12x** (考虑 10 个以上的大客户采用，实际收益取决于客户采用率和使用模式)
 
 ### 验证指标
 
@@ -223,7 +247,7 @@ python -m benchmark.lora_service_benchmark \
 
 **当前实现：**
 ```python
-# lora/mem_pool.py:356-370
+# lora/mem_pool.py:359-370
 for uid in cur_uids:
     if uid not in self.uid_to_buffer_id:
         buffer_id = get_available_buffer_slot()  # 同步等待
@@ -464,7 +488,7 @@ class MemoryCompactor:
 - **调优难度**: 预取策略需要针对 workload 调整
 - **资源竞争**: 预取可能与主计算竞争内存带宽
 
-**ROI**: **5-8x** (针对 SaaS 平台客户)
+**预估 ROI**: **5-8x** (针对 SaaS 平台客户，需验证预取命中率提升)
 
 ### 验证指标
 
@@ -768,7 +792,7 @@ class DynamicBatchScheduler:
 - **公平性问题**: 优先级可能导致低优先级饥饿，需要监控
 - **调优成本**: 需要针对不同 workload 调优参数
 
-**ROI**: **15-25x** (针对多租户 SaaS 场景)
+**预估 ROI**: **15-25x** (针对多租户 SaaS 场景，基于理想化假设)
 
 ### 验证指标
 
@@ -794,7 +818,7 @@ python -m benchmark.lora_scheduling_benchmark \
 
 **当前限制：**
 ```python
-# lora/lora_config.py:24-30
+# lora/lora_config.py:22-27
 class LoRAConfig:
     r: int  # 单一秩值，应用于所有层
 ```
@@ -1086,7 +1110,7 @@ def iterative_rank_optimization(self, train_data, val_data,
 - **调优成本**: 自动秩选择可能需要多次迭代
 - **计算开销**: 敏感度分析增加训练成本
 
-**ROI**: **4-6x** (针对云服务商场景)
+**预估 ROI**: **4-6x** (针对云服务商场景，敏感度分析技术尚需验证)
 
 ### 验证指标
 
@@ -1448,7 +1472,7 @@ def speculative_decode_with_lora(self, input_ids, draft_lora_uid, main_lora_uid)
 - **验证成本**: 需要多模态数据集
 - **兼容性**: 多个组件集成可能引入 bug
 
-**ROI**: **5-7x** (针对多模态应用扩展)
+**预估 ROI**: **5-7x** (针对多模态应用扩展，MoE+LoRA 集成复杂度较高)
 
 ### 验证指标
 
@@ -1812,7 +1836,7 @@ class LoRAVizDashboard:
 - **技术风险**: 低，成熟开源组件
 - ** adoption**: 需要推动团队使用
 
-**ROI**: **10-20x** (针对生产运维)
+**预估 ROI**: **10-20x** (针对生产运维，基于成熟开源组件)
 
 ### 验证指标
 
@@ -1961,6 +1985,75 @@ class LoRAVizDashboard:
      - 备选方案备份
      - 降低耦合度
 
+## 新增洞察与探索方向
+
+本节补充了与现有 SGLang 特性的协同优化潜力，以及未来值得探索的技术方向。
+
+### LoRA + HiCache 协同潜力
+
+SGLang 的 HiCache（多级存储后端）为 LoRA 提供了额外的优化空间：
+
+**协同机会：**
+1. **LoRA 权重的层级存储**：将冷门适配器存储在 CPU/NVMe，热门适配器保持在 GPU
+2. **与 KV Cache 统一管理**：LoRA 权重可利用 HiCache 的预取和驱逐策略
+3. **Disaggregation 场景优化**：在 P/D 分离架构下，LoRA 权重可与 KV Cache 一同迁移
+
+**潜在收益：**
+- 支持的适配器数量从 thousands 扩展到 millions
+- 降低 GPU 显存压力，支持更大的 batch size
+- 与 Prefill-Decode 分离天然契合
+
+**相关代码路径：**
+- `python/sglang/srt/mem_cache/` - HiCache 多级存储实现
+- `python/sglang/srt/mem_cache/sparsity/` - 稀疏注意力优化
+
+### LoRA + FP8 量化结合
+
+SGLang 支持 34+ 种量化方法，LoRA 与 FP8 的结合值得探索：
+
+**技术考量：**
+1. **FP8 LoRA 权重存储**：在不显著损失精度的情况下，LoRA A/B 权重可使用 FP8 存储
+2. **混合精度计算**：基础模型 FP8 + LoRA 分支 FP16 的混合策略
+3. **通信量化**：在张量并行场景下，LoRA 梯度/权重的 FP8 通信
+
+**挑战：**
+- LoRA 的低秩特性对精度敏感，FP8 可能导致性能下降
+- 需要针对不同秩值进行量化误差分析
+- 与 Cutlass FP8 GEMM kernel 的集成复杂度
+
+**相关 Issue：**
+- 参考 Q1 Roadmap #10.3 Communication Quantization
+
+### LoRA 在 Disaggregation 场景的考量
+
+SGLang 的 Prefill-Decode 分离架构对 LoRA 有特殊影响：
+
+**架构影响：**
+1. **Prefill 节点**：可能需要完整加载所有请求涉及的 LoRA 适配器
+2. **Decode 节点**：需要维护与 Prefill 节点一致的适配器状态
+3. **KV Cache 迁移**：LoRA 相关的 attention pattern 需要正确传递
+
+**优化方向：**
+1. **适配器状态同步**：Prefill → Decode 时同步 LoRA buffer ID 映射
+2. **共享内存池**：使用 RDMA/NIXL 实现跨节点的 LoRA 权重共享
+3. **预加载策略**：Decode 节点提前预加载即将迁移请求的适配器
+
+**相关代码路径：**
+- `python/sglang/srt/managers/scheduler.py` - PD 分离调度
+- Q1 Roadmap 六. PD Disaggregation 章节
+
+### 与 Q1 Roadmap 的交叉引用
+
+本 LoRA 规划与 Q1 Roadmap 的以下项目有关联：
+
+| Q1 Roadmap 项目 | LoRA 关联 | 协同优先级 |
+|----------------|----------|-----------|
+| 11.2 Overlap Weight Loading | 提案二 内存预取 | P0 - 直接相关 |
+| 11.3 LoRA for MoE Layers | 提案五 MoE 支持 | P1 - 核心扩展 |
+| 11.1 LoRA for Speculative | 提案五 推测解码 | P2 - 功能增强 |
+| 7.1 Sparse Attention | 内存池优化 | P2 - 潜在协同 |
+| 6.1 Radix Cache on Decode | Disagg 支持 | P3 - 长期方向 |
+
 ## 参考资料
 
 ### 学术论文
@@ -1983,17 +2076,19 @@ class LoRAVizDashboard:
 
 ### GitHub Issues
 
+> **注意**：以下 Issue 链接指向上游 sgl-project/sglang 仓库，可能需要验证当前状态和可访问性。
+
 1. **Issue #2929**: LoRA Roadmap Discussion
-   - https://github.com/sgl-project/sglang/issues/2929
+   - https://github.com/sgl-project/sglang/issues/2929 *(待核实)*
 
 2. **Issue #8712**: Async LoRA Prefetching
-   - https://github.com/sgl-project/sglang/issues/8712
+   - https://github.com/sgl-project/sglang/issues/8712 *(待核实)*
 
 3. **Issue #7910**: Cutlass Kernels for LoRA
-   - https://github.com/sgl-project/sglang/issues/7910
+   - https://github.com/sgl-project/sglang/issues/7910 *(待核实)*
 
 4. **Issue #9040**: LoRA Kernel Benchmarking and Optimization
-   - https://github.com/sgl-project/sglang/issues/9040
+   - https://github.com/sgl-project/sglang/issues/9040 *(待核实)*
 
 ### 外部资源
 
@@ -2008,9 +2103,9 @@ class LoRAVizDashboard:
 
 ### 相关文档
 
-- `/Users/twcai/workspace/github/sglang/docs/analysis/lora_support.md` - Current LoRA implementation details
-- `/Users/twcai/workspace/github/sglang/python/sglang/srt/lora/` - LoRA source code directory
-- `/Users/twcai/workspace/github/sglang/sgl-kernel/csrc/` - CUDA kernel source code
+- `/Users/twcai/private_workspace/github/sglang/docs/analysis/lora_support.md` - Current LoRA implementation details
+- `/Users/twcai/private_workspace/github/sglang/python/sglang/srt/lora/` - LoRA source code directory
+- `/Users/twcai/private_workspace/github/sglang/sgl-kernel/csrc/` - CUDA kernel source code
 
 ## 结论
 
@@ -2027,7 +2122,7 @@ class LoRAVizDashboard:
 - **间接收益**：生态完整性带来新场景 $500K-800K/年
 - **长期价值**：技术领先性，吸引更多用户和贡献者
 
-**综合 ROI**：长期可达 **10-15x**
+**预估综合 ROI**：长期可达 **10-15x**（取决于市场采用率和技术实现效果）
 
 **建议执行顺序**：
 1. 立即启动提案一 (Kernel) 和提案二 (预取) - 高 ROI，低风险
