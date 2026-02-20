@@ -54,7 +54,7 @@ graph TD
 
     subgraph Distributed
         Parallel["Parallel State<br/>python/sglang/srt/distributed/parallel_state.py"]
-        Comm["Communication<br/>python/sglang/srt/distributed/communication.py"]
+        Comm["Communication<br/>python/sglang/srt/distributed/communication_op.py"]
     end
 
     HTTP --> Tokenizer
@@ -188,7 +188,7 @@ sequenceDiagram
 **位置**: `python/sglang/srt/managers/scheduler.py`
 
 **架构特点：**
-- 继承多个 Mixin 类实现功能组合（共9个Mixin）：
+- 继承多个 Mixin 类实现功能组合（共10个Mixin）：
   - `SchedulerOutputProcessorMixin`: 输出处理
   - `SchedulerUpdateWeightsMixin`: 权重更新
   - `SchedulerProfilerMixin`: 性能分析
@@ -198,6 +198,7 @@ sequenceDiagram
   - `SchedulerMultiplexMixin`: 多路复用支持
   - `SchedulerRuntimeCheckerMixin`: 运行时检查
   - `SchedulerPPMixin`: 流水线并行支持
+  - `SchedulerDPAttnMixin`: 数据并行注意力支持
 
 **核心功能：**
 - 请求生命周期管理
@@ -302,7 +303,7 @@ graph TB
 - 实现: 连续的 KV 缓存张量
 - 支持动态分配和回收
 
-**Memory Allocator 关键方法：**
+**Memory Allocator 关键方法：**（位于 `python/sglang/srt/mem_cache/common.py`）
 ```python
 def alloc_for_extend(batch: ScheduleBatch):
     # 为预填充分配内存
@@ -560,9 +561,10 @@ graph TB
     end
 
     subgraph MoE
-        DeepseekMoE["DeepseekMoE<br/>deepseek_moe.py"]
-        MoeRunner["MoeRunner<br/>moe_runner.py"]
-        FusedMoE["Fused MoE Kernel<br/>fused_moe_triton.py"]
+        DeepseekMoE["DeepseekMoE<br/>models/deepseek.py"]
+        MoeRunner["MoeRunner<br/>moe_runner/runner.py"]
+        FusedMoE["Fused MoE Kernel<br/>fused_moe_triton/layer.py"]
+        DeepEPMoE["DeepEPMoE<br/>ep_moe/layer.py"]
     end
 
     subgraph Other Layers

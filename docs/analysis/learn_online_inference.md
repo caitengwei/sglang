@@ -536,7 +536,7 @@ class Qwen2MoeForCausalLM(nn.Module):
 
 **文件**: `python/sglang/srt/models/qwen2_moe.py`
 
-**位置**: line 132
+**定位**: `python/sglang/srt/models/qwen2_moe.py` 中 `class Qwen2MoeSparseMoeBlock`
 
 ```python
 class Qwen2MoeSparseMoeBlock(nn.Module):
@@ -617,7 +617,7 @@ def _forward_router_experts(self, hidden_states):
 ### 4. TopK 选择逻辑
 
 ```python
-class TopK(CustomOp):
+class TopK(MultiPlatformOp):
     def forward(self, hidden_states, router_logits):
         return select_experts(
             hidden_states=hidden_states,
@@ -630,7 +630,7 @@ class TopK(CustomOp):
 
 **文件**: `python/sglang/srt/layers/moe/fused_moe_triton/fused_moe_triton_kernels.py`
 
-**位置**: line 76
+**定位**: `python/sglang/srt/layers/moe/fused_moe_triton/fused_moe_triton_kernels.py` 中 `fused_moe_kernel_gptq_awq()`
 
 ```python
 @triton.jit
@@ -663,9 +663,13 @@ def fused_moe_kernel_gptq_awq(
 
 ### 6. 专家并行（EP）
 
-**文件**: `python/sglang/srt/layers/moe/fused_moe_triton/layer.py`
+**文件**:
+- `python/sglang/srt/layers/moe/fused_moe_triton/layer.py`
+- `python/sglang/srt/layers/moe/ep_moe/layer.py`
 
-**FusedMoE 类位置**: line 104
+**类定位**:
+- `python/sglang/srt/layers/moe/fused_moe_triton/layer.py` 中 `class FusedMoE`
+- `python/sglang/srt/layers/moe/ep_moe/layer.py` 中 `class DeepEPMoE`
 
 ```python
 class DeepEPMoE(FusedMoE):
@@ -830,60 +834,60 @@ class TokenizerManager:
 ```
 1. 客户端请求
    ↓
-2. HTTP Server (http_server.py:1100)
+2. HTTP Server (`python/sglang/srt/entrypoints/http_server.py`)
    - openai_v1_chat_completions()
    ↓
-3. OpenAIServingChat (serving_chat.py:81)
+3. OpenAIServingChat (`python/sglang/srt/entrypoints/openai/serving_chat.py`)
    - handle_request()
    - _convert_to_internal_request()
    ↓
-4. TokenizerManager (tokenizer_manager.py:405)
+4. TokenizerManager (`python/sglang/srt/managers/tokenizer_manager.py`)
    - generate_request()
-   - _tokenize_one_request() (586)
-   - _tokenize_texts() (506)
-   - _send_one_request() (923)
+   - _tokenize_one_request()
+   - _tokenize_texts()
+   - _send_one_request()
    - send_pyobj() → ZMQ → Scheduler
    ↓
-5. Scheduler (scheduler.py:958)
+5. Scheduler (`python/sglang/srt/managers/scheduler.py`)
    - event_loop_normal()
-   - recv_requests() (需要搜索)
-   - get_next_batch_to_run() (1630)
-   - alloc_for_extend() / alloc_for_decode() (mem_cache/common.py:320/420)
-   - match_prefix() (mem_cache/radix_cache.py:251)
-   - run_batch() (需要搜索)
-   - forward_batch_generation() (tp_worker.py:61)
+   - recv_requests()
+   - get_next_batch_to_run()
+   - alloc_for_extend() / alloc_for_decode() (`python/sglang/srt/mem_cache/common.py`)
+   - match_prefix() (`python/sglang/srt/mem_cache/radix_cache.py`)
+   - run_batch()
+   - forward_batch_generation() (`python/sglang/srt/managers/tp_worker.py`)
    ↓
-6. ModelRunner (model_runner.py:需要搜索)
+6. ModelRunner (`python/sglang/srt/model_executor/model_runner.py`)
    - forward()
    - model.forward() (实际模型)
    ↓
-7. Qwen2MoeForCausalLM (models/qwen2_moe.py:需要搜索)
+7. Qwen2MoeForCausalLM (`python/sglang/srt/models/qwen2_moe.py`)
    - forward()
    - self.model()
    ↓
-8. Qwen2MoeModel (models/qwen2_moe.py:需要搜索)
+8. Qwen2MoeModel (`python/sglang/srt/models/qwen2_moe.py`)
    - forward()
    - self.layers[i]()   # 多层循环
    ↓
-9. Qwen2MoeDecoderLayer (models/qwen2_moe.py:需要搜索)
+9. Qwen2MoeDecoderLayer (`python/sglang/srt/models/qwen2_moe.py`)
    - forward()
    - self.self_attn()
    - self.mlp()         # MoE层
    ↓
-10. Qwen2MoeSparseMoeBlock (models/qwen2_moe.py:132/264)
+10. Qwen2MoeSparseMoeBlock (`python/sglang/srt/models/qwen2_moe.py`)
     - forward()
     - self.gate()        # 门控 (在 models/qwen2_moe.py)
     - self.topk()        # TopK选择 (在 layers/moe/topk.py)
     - self.experts()     # 专家计算 (在 layers/moe/fused_moe_triton/)
     ↓
-11. FusedMoE (layers/moe/fused_moe_triton/layer.py:104)
-    - forward() (832)
+11. FusedMoE (`python/sglang/srt/layers/moe/fused_moe_triton/layer.py`)
+    - forward()（当前文件存在多个实现）
     - select_experts()   (在 layers/moe/topk.py)
-    - fused_moe_kernel_gptq_awq() (fused_moe_triton_kernels.py:76)  # Triton Kernel
+    - fused_moe_kernel_gptq_awq() (`python/sglang/srt/layers/moe/fused_moe_triton/fused_moe_triton_kernels.py`)  # Triton Kernel
     ↓
 12. 返回路径
     - 结果返回 TPWorker
-    - process_batch_result() (scheduler.py:需要搜索)
+    - process_batch_result() (`python/sglang/srt/managers/scheduler.py`)
     - send_to_detokenizer.send_pyobj()
     - DetokenizerManager.process_batch_result()
     - send_to_tokenizer.send_pyobj()
@@ -891,25 +895,25 @@ class TokenizerManager:
     - HTTP 响应
 ```
 
-### 2. 关键代码行号
+### 2. 关键代码定位（函数/类）
 
-| 组件 | 关键方法 | 文件 | 行号 |
-|------|---------|------|------|
-| HTTP Server | openai_v1_chat_completions | http_server.py | 1099 |
-| OpenAI Serving | handle_request | serving_chat.py | 81 |
-| TokenizerManager | generate_request | tokenizer_manager.py | 405 |
-| TokenizerManager | _tokenize_one_request | tokenizer_manager.py | 586 |
-| TokenizerManager | _send_one_request | tokenizer_manager.py | 923 |
-| Scheduler | event_loop_normal | scheduler.py | 958 |
-| Scheduler | get_next_batch_to_run | scheduler.py | 1630 |
-| Memory Pool | alloc_for_extend | mem_cache/common.py | 320 |
-| Memory Pool | alloc_for_decode | mem_cache/common.py | 420 |
-| RadixCache | match_prefix | mem_cache/radix_cache.py | 251 |
-| TPWorker | forward_batch_generation | tp_worker.py | 61 |
-| Qwen2MoeSparseMoeBlock | __init__ | models/qwen2_moe.py | 132 |
-| Qwen2MoeSparseMoeBlock | forward | models/qwen2_moe.py | 264 |
-| Qwen2MoeSparseMoeBlock | _forward_shared_experts | models/qwen2_moe.py | 207 |
-| Qwen2MoeSparseMoeBlock | _forward_router_experts | models/qwen2_moe.py | 243 |
+| 组件 | 关键方法/类 | 文件 |
+|------|------------|------|
+| HTTP Server | `openai_v1_chat_completions` | `python/sglang/srt/entrypoints/http_server.py` |
+| OpenAI Serving | `handle_request` | `python/sglang/srt/entrypoints/openai/serving_base.py` |
+| TokenizerManager | `generate_request` | `python/sglang/srt/managers/tokenizer_manager.py` |
+| TokenizerManager | `_tokenize_one_request` | `python/sglang/srt/managers/tokenizer_manager.py` |
+| TokenizerManager | `_send_one_request` | `python/sglang/srt/managers/tokenizer_manager.py` |
+| Scheduler | `event_loop_normal` | `python/sglang/srt/managers/scheduler.py` |
+| Scheduler | `get_next_batch_to_run` | `python/sglang/srt/managers/scheduler.py` |
+| Memory Pool | `alloc_for_extend` | `python/sglang/srt/mem_cache/common.py` |
+| Memory Pool | `alloc_for_decode` | `python/sglang/srt/mem_cache/common.py` |
+| RadixCache | `match_prefix` | `python/sglang/srt/mem_cache/radix_cache.py` |
+| TPWorker | `forward_batch_generation` | `python/sglang/srt/managers/tp_worker.py` |
+| Qwen2MoeSparseMoeBlock | `__init__` | `python/sglang/srt/models/qwen2_moe.py` |
+| Qwen2MoeSparseMoeBlock | `forward` | `python/sglang/srt/models/qwen2_moe.py` |
+| Qwen2MoeSparseMoeBlock | `_forward_shared_experts` | `python/sglang/srt/models/qwen2_moe.py` |
+| Qwen2MoeSparseMoeBlock | `_forward_router_experts` | `python/sglang/srt/models/qwen2_moe.py` |
 
 ### 3. 数据流和控制流
 
@@ -1089,7 +1093,9 @@ prof.export_chrome_trace("trace.json")
    - `python/sglang/srt/layers/moe/fused_moe_triton/` - Fused MoE Kernel 实现
      - `fused_moe_triton_kernels.py` - Triton kernels
      - `layer.py` - FusedMoE 基础类
-   - `python/sglang/srt/layers/moe/deepseek_moe.py` - DeepSeek MoE
+   - `python/sglang/srt/models/deepseek.py` - DeepSeek MoE（V2/V3 主实现之一）
+   - `python/sglang/srt/models/deepseek_v2.py` - DeepSeek V2 路由/专家实现
+   - `python/sglang/srt/layers/moe/ep_moe/layer.py` - DeepEP 专家并行实现
    - `python/sglang/srt/layers/moe/ep_moe/` - 专家并行
 
 5. **基础组件**
