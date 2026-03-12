@@ -192,7 +192,6 @@ work_dirs/
 *.csv
 
 !logo.png
-!docs_new/images/*.png
 
 # Prerequisites
 *.d
@@ -275,4 +274,8 @@ sgl-kernel/csrc/**/*_musa/
 *.glb
 *.ply
 *.npz
-artifacts/
+||||||| parent of a579db044 (save agents config)
+core_*
+
+# research
+research/
