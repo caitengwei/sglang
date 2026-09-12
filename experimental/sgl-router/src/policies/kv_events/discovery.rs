@@ -39,6 +39,14 @@ pub struct EventConfig {
     pub port_base: u16,
     /// ZMQ topic prefix the gateway should SUBSCRIBE to.
     pub topic: String,
+    /// Base port of the worker's dedicated load-snapshot socket range
+    /// (per-rank load port = `load_port_base + dp_rank`). `None` when the
+    /// worker predates load publishing — the load subscriber is then skipped
+    /// and selection falls back to the router-side in-flight counter.
+    pub load_port_base: Option<u16>,
+    /// Topic prefix for the dedicated load socket. The publisher advertises
+    /// it with `load_port_base`; both fields are required before subscribing.
+    pub load_topic: Option<String>,
     /// Worker-reported `page_size`. Callers MUST compare against their
     /// own configured `block_size`; a mismatch produces silent
     /// miscompute since [`super::hash::compute_block_hashes`] is keyed
@@ -48,6 +56,14 @@ pub struct EventConfig {
     /// many SUB connections (one per rank), skipping any rank whose
     /// `port_base + dp_rank` overflows `u16`.
     pub dp_size: u32,
+    /// Whether the worker uses EAGLE-family speculative decoding (EAGLE /
+    /// EAGLE3 / FROZEN_KV_MTP), reported via `/server_info`'s top-level
+    /// `speculative_algorithm`. When true the worker hashes KV blocks over
+    /// overlapping token *bigrams* (`is_bigram = is_eagle`), so the router must
+    /// use [`super::hash::compute_block_hashes_bigram`] for its query hashes to
+    /// match the worker's stored hashes — otherwise cache-aware routing
+    /// silently never matches and degrades to min-load.
+    pub is_bigram: bool,
 }
 
 /// Default timeout for the `/server_info` introspection request. The
@@ -88,6 +104,10 @@ pub async fn fetch_event_config(
 
     let body = fetch_with_retry(&server_info_url, worker_url, client).await?;
 
+    // EAGLE-family speculative decoding ⇒ the worker hashes KV blocks over
+    // token bigrams; the router must mirror that on the selection side.
+    let is_bigram = classify_bigram(body.speculative_algorithm.as_deref(), worker_url);
+
     let block = match body.kv_events {
         Some(b) => b,
         None => {
@@ -115,8 +135,11 @@ pub async fn fetch_event_config(
         host,
         port_base: block.endpoint_port_base,
         topic: block.topic,
+        load_port_base: block.load_endpoint_port_base,
+        load_topic: block.load_topic,
         block_size: block.block_size,
         dp_size: block.dp_size,
+        is_bigram,
     }))
 }
 
@@ -185,6 +208,43 @@ async fn fetch_with_retry(
 struct ServerInfoResponse {
     #[serde(default)]
     kv_events: Option<KvEventsBlock>,
+    /// Top-level `/server_info` field. EAGLE-family values
+    /// (EAGLE / EAGLE3 / FROZEN_KV_MTP) mean the worker hashes KV blocks over
+    /// token bigrams — see [`EventConfig::is_bigram`].
+    #[serde(default)]
+    speculative_algorithm: Option<String>,
+}
+
+/// Whether a worker's `/server_info` `speculative_algorithm` means it hashes KV
+/// blocks over token bigrams. Recognizes the engine's `is_eagle()` set
+/// (`EAGLE`, `EAGLE3`, `FROZEN_KV_MTP`, case-insensitive).
+///
+/// An *unrecognized* value that looks EAGLE-family (contains `EAGLE` or `MTP`)
+/// is logged loudly and treated as non-bigram — it most likely means a new
+/// EAGLE variant the router doesn't know yet, which would otherwise silently
+/// zero out cache-aware routing (the exact failure this whole path fixes).
+/// Recognized non-EAGLE algorithms (and the absent field) map to `false`
+/// silently.
+pub(crate) fn classify_bigram(speculative_algorithm: Option<&str>, worker_url: &str) -> bool {
+    let Some(algo) = speculative_algorithm else {
+        return false;
+    };
+    let upper = algo.to_ascii_uppercase();
+    match upper.as_str() {
+        "EAGLE" | "EAGLE3" | "FROZEN_KV_MTP" => true,
+        _ => {
+            if upper.contains("EAGLE") || upper.contains("MTP") {
+                tracing::warn!(
+                    worker_url = %worker_url,
+                    speculative_algorithm = %algo,
+                    "kv-events: unrecognized EAGLE-like speculative_algorithm; treating as \
+                     non-bigram (unigram) hashing. If this is an EAGLE-family algorithm, \
+                     cache-aware routing will silently never match — add it to classify_bigram",
+                );
+            }
+            false
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -202,6 +262,12 @@ struct KvEventsBlock {
     endpoint_port_base: u16,
     #[serde(default)]
     topic: String,
+    /// Base port of the dedicated load-snapshot socket range. Absent on
+    /// workers that predate load publishing (`None` ⇒ no load subscriber).
+    #[serde(default)]
+    load_endpoint_port_base: Option<u16>,
+    #[serde(default)]
+    load_topic: Option<String>,
     block_size: u32,
     dp_size: u32,
 }
@@ -256,6 +322,8 @@ mod tests {
                 "endpoint_host": "*",
                 "endpoint_port_base": 5557,
                 "topic": "kv",
+                "load_endpoint_port_base": 5559,
+                "load_topic": "load",
                 "block_size": 64,
                 "dp_size": 2,
             }
@@ -268,10 +336,49 @@ mod tests {
                 host: "127.0.0.1".to_string(),
                 port_base: 5557,
                 topic: "kv".to_string(),
+                load_port_base: Some(5559),
+                load_topic: Some("load".to_string()),
                 block_size: 64,
                 dp_size: 2,
+                is_bigram: false,
             })
         );
+    }
+
+    /// EAGLE-family `speculative_algorithm` (and only those) must set
+    /// `is_bigram`, so the router selects the bigram hasher and its query
+    /// hashes match the worker's bigram-stored block hashes.
+    #[tokio::test]
+    async fn fetch_sets_is_bigram_for_eagle_family_only() {
+        for (algo, expected) in [
+            (Some("EAGLE"), true),
+            (Some("EAGLE3"), true),
+            (Some("FROZEN_KV_MTP"), true),
+            (Some("eagle"), true), // case-insensitive
+            (Some("NONE"), false),
+            (Some("NEXTN"), false), // non-eagle speculative algorithm
+            (None, false),          // no speculative decoding
+        ] {
+            let mut obj = json!({
+                "kv_events": {
+                    "publisher": "zmq",
+                    "endpoint_host": "*",
+                    "endpoint_port_base": 5557,
+                    "topic": "",
+                    "block_size": 64,
+                    "dp_size": 1,
+                }
+            });
+            if let Some(a) = algo {
+                obj["speculative_algorithm"] = json!(a);
+            }
+            let (url, _shutdown) = spawn_fake_worker(Arc::new(obj)).await;
+            let got = fetch_event_config(&url, &client()).await.unwrap().unwrap();
+            assert_eq!(
+                got.is_bigram, expected,
+                "speculative_algorithm={algo:?} should map to is_bigram={expected}"
+            );
+        }
     }
 
     /// Worker reports a specific bind host (not wildcard): gateway must

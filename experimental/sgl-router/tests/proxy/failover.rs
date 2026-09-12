@@ -31,21 +31,25 @@ async fn failover_when_one_worker_dies() {
             port: 0,
         },
         observability: Default::default(),
-        models: vec![ModelConfig {
+        model: ModelConfig {
             id: "tiny".into(),
             tokenizer_path: "tests/fixtures/tiny_tokenizer.json".into(),
             policy: PolicyKind::RoundRobin,
+            decode_policy: Default::default(),
+            bucket_config: None,
             circuit_breaker: Some(CircuitBreakerConfig {
                 threshold: std::num::NonZeroU32::new(1).unwrap(), // open after first failure
                 cool_down_secs: 30,
             }),
             cache_aware: None,
-        }],
-        discovery: DiscoveryConfig {
-            backend: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
-                urls: vec![w1.url.clone(), w2.url.clone(), w3.url.clone()],
-            }),
+            sticky: None,
+            affinity: None,
+            fused: None,
+            eligibility: None,
         },
+        discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
+            urls: vec![w1.url.clone(), w2.url.clone(), w3.url.clone()],
+        }),
         proxy: ProxyConfig::default(),
         active_load: ActiveLoadConfig::default(),
     };
